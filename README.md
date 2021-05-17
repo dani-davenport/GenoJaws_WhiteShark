@@ -1,5 +1,6 @@
 # Project GenoJaws
 An exome capture project to investigate population decline (evolutionary and ecological time scales) in shark spp.
+This repository contains the code used to investigate population genomics in the white shark (*Carcharodon carcharias*)
 
 # Background :
 
