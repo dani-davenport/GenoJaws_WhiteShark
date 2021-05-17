@@ -1,0 +1,17 @@
+#!/bin/bash
+#PBS -V
+#PBS -l select=1:ncpus=20:mem=20GB,walltime=30:00:00
+#PBS -A qris-uq
+#PBS -N adapterremoval
+
+module load anaconda
+source activate /groups/MolFishLab/seqDataPy3.6
+cp list-fastqc-raw.txt $TMPDIR
+
+cd $TMPDIR/
+
+cp -r /groups/MolFishLab/white_shark_data $TMPDIR
+for i in $(cat list-fastqc-raw.txt)
+do
+AdapterRemoval --file1 white_shark_data/$i"_R1.fastq.gz" --file2 white_shark_data/$i"_R2.fastq.gz" --basename $i --minlength 30 --trimns --trimqualities --minquality 20 --gzip  2>&1 | tee removeAdpater_default.log
+done

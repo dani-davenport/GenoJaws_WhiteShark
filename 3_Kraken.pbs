@@ -1,0 +1,55 @@
+#!/bin/bash
+#PBS -V
+#PBS -l select=1:ncpus=24:mem=50GB,walltime=50:00:00
+#PBS -A qris-uq
+#PBS -N Kraken
+cp $PBS_O_WORKDIR/list-fastqc-raw.txt $TMPDIR
+module load anaconda
+source activate /groups/MolFishLab/seqDataPy3.6
+cp -r /30days/uqddave1/2_FLASH_Collapsed_Reads/ $TMPDIR
+# could use prebuilt database
+#wget ftp://ftp.ccb.jhu.edu/pub/data/kraken2_dbs/minikraken2_v2_8GB_201904_UPDATE.tgz
+#tar -xvzf minikraken2_v2_8GB_201904_UPDATE.tgz
+
+# download mouse genome
+#mkdir mus_musculus
+#cd mus_musculus/
+#wget ftp://ftp.ensembl.org/pub/release-98/fasta/mus_musculus/dna/*
+#gzip -d *
+#cd ..
+cd $TMPDIR
+# kraken2-build --thread 18 --db customDB --use-ftp --download-taxonomy
+# kraken2-build --thread 18 --db customDB --use-ftp --download-library human
+# kraken2-build --thread 18 --db customDB --use-ftp --download-library archaea
+# kraken2-build --thread 18 --db customDB --use-ftp --download-library bacteria
+# kraken2-build --thread 18 --db customDB --use-ftp --download-library viral
+# kraken2-build --thread 18 --db customDB --use-ftp --download-library fungi
+# kraken2-build --thread 18 --db customDB --use-ftp --download-library protozoa
+# kraken2-build --thread 18 --db customDB --use-ftp --download-library UniVec_Core
+#build custom mouse
+
+#for file in $(cat /30days/uqddave1/Genome_Resources/mus_musculus/mouse-files.txt)
+#do
+#kraken2-build --thread 18 --db customDB --add-to-library /30days/uqddave1/Genome_Resources/mus_musculus/$file
+#done
+
+#kraken2-build --db customDB --threads 18 --build
+
+
+cp -r $PBS_O_WORKDIR/3_Kraken_TaxonomicID/customDB/ $TMPDIR
+
+for i in $(cat list-fastqc-raw.txt); do kraken2 --threads 18 --db customDB --gzip-compressed 2_FLASH_Collapsed_Reads/$i".extendedFrags.fastq.gz" --output $i".kraken_PE" --use-names --report $i".PE_report" ; done
+
+for i in $(cat list-fastqc-raw.txt); do kraken2 --threads 18 --db customDB --gzip-compressed --paired 2_FLASH_Collapsed_Reads/$i".notCombined_1.fastq.gz" 2_FLASH_Collapsed_Reads/$i".notCombined_2.fastq.gz" --output $i".kraken_notCombined" --use-names --report $i".notCombined_report"; done
+# run KRONA
+# Krona requires an input file with two columns containing:
+## A taxonomic identifier – this will be the NCBI taxonomic identifier
+## A score – in this instance, it is the relative abundance of that taxonomic ID within your sample.
+# I run ./groups/MolFishLab/seqDataPy3.6/opt/krona/updateTaxonomy
+for i in $(cat list-fastqc-raw.txt); do ktImportTaxonomy -q 2 -t 3 $i".kraken_PE" -o $i"krona_PE_out.html"; done
+for i in $(cat list-fastqc-raw.txt); do ktImportTaxonomy -q 2 -t 3 $i".kraken_notCombined" -o $i"krona_notCombined_out.html"; done
+## everything was set to root? -> when IDs were not found in the local database they are set to root
+# Transfer the html file over to your computer and open it with a web browse
+
+cp -r *PE* $PBS_O_WORKDIR/3_Kraken_TaxonomicID/
+cp -r *notCombined* $PBS_O_WORKDIR/3_Kraken_TaxonomicID/

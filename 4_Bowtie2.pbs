@@ -1,0 +1,149 @@
+#!/bin/bash
+#PBS -V
+#PBS -l select=1:ncpus=24:mem=120GB,walltime=80:00:00
+#PBS -A qris-uq
+#PBS -N Bowtie2-5-2
+
+
+cd $TMPDIR
+
+#setup directories
+mkdir -p bowtieDB/human
+mkdir -p bowtieDB/mouse
+mkdir -p bowtieDB/bacteria
+mkdir -p 4_Bowtie_Mapping/human
+mkdir -p 4_Bowtie_Mapping/mouse
+mkdir -p 4_Bowtie_Mapping/bacteria
+mkdir -p $TMPDIR/4_Bowtie_Mapping/Human_Removed
+mkdir -p $TMPDIR/4_Bowtie_Mapping/Mouse_Removed
+mkdir -p $TMPDIR/4_Bowtie_Mapping/Bacteria_Removed/
+mkdir $TMPDIR/2_FLASH_Collapsed_Reads/
+mkdir -p $TMPDIR/3_Kraken_TaxonomicID/
+module load anaconda
+module load bowtie2
+module load bbmap
+module load samtools
+source activate /groups/MolFishLab/seqDataPy3.6
+
+cp -r /90days/uqddave1/3_Kraken_TaxonomicID/customDB/ $TMPDIR/3_Kraken_TaxonomicID/
+cp /30days/uqddave1/subset-bacteria-temporary.fa $TMPDIR
+# I split the files into 5 datasets due to memory constraints
+cp /90days/uqddave1/list-fastqc-dataset-5-2.txt $TMPDIR
+
+for i in $(cat list-fastqc-dataset-5-2.txt); do
+    cp /QRISdata/Q1253/2_FLASH_Collapsed_Reads/$i* $TMPDIR/2_FLASH_Collapsed_Reads ;
+done
+
+# collapse reads
+#DIROUT=$TMPDIR/2_FLASH_Collapsed_Reads/
+#for i in $(cat list-fastqc-raw.txt); do
+#flash $i".pair1.truncated.gz" $i".pair2.truncated.gz" -z -o $i --allow-outies --output-directory=$DIROUT --max-overlap=200 2>&1 | tee -a flash.log ;
+#done
+
+# Remove contaminates
+## A) HUMAN
+bowtie2-build -f $TMPDIR/3_Kraken_TaxonomicID/customDB/library/human/library.fna $TMPDIR/bowtieDB/human/human
+#cp -r /30days/uqddave1/bowtieDB/human $TMPDIR
+for i in $(cat list-fastqc-dataset-5-2.txt); do
+bowtie2 -q --phred33 --sensitive -I 0 -X 200 --fr -x $TMPDIR/bowtieDB/human/human -1 $TMPDIR/2_FLASH_Collapsed_Reads/$i".notCombined_1.fastq.gz" -2 $TMPDIR/2_FLASH_Collapsed_Reads/$i".notCombined_2.fastq.gz" -S $TMPDIR/4_Bowtie_Mapping/human/$i".notCombined.mapping_human.sam"
+bowtie2 -q --phred33 --sensitive --fr -x $TMPDIR/bowtieDB/human/human -U $TMPDIR/2_FLASH_Collapsed_Reads/$i".extendedFrags.fastq.gz" -S $TMPDIR/4_Bowtie_Mapping/human/$i".extendedFrags.mapping_human.sam";
+done
+
+
+# Count reads that mapped to the contaminant database and should be removed
+for i in $(cat list-fastqc-dataset-5-2.txt); do
+samtools view -S -c -F 4 $TMPDIR/4_Bowtie_Mapping/human/$i".extendedFrags.mapping_human.sam" > $TMPDIR/4_Bowtie_Mapping/human/$i".count_extendedFrags_human.txt"
+samtools view -S -c -F 4 $TMPDIR/4_Bowtie_Mapping/human/$i".notCombined.mapping_human.sam" > $TMPDIR/4_Bowtie_Mapping/human/$i".count_notCombined_human.txt"
+# Make a list of reads that mapped to the contaminant database and should be removed (-F 4 mapped, -f 4 unmapped)
+samtools view -S -F 4 $TMPDIR/4_Bowtie_Mapping/human/$i".extendedFrags.mapping_human.sam" | cut -f 1 | uniq > $TMPDIR/4_Bowtie_Mapping/human/$i".extendedFrags.human.RemoveList.txt"
+samtools view -S -F 4 $TMPDIR/4_Bowtie_Mapping/human/$i".notCombined.mapping_human.sam" | cut -f 1 | uniq > $TMPDIR/4_Bowtie_Mapping/human/$i".notCombined.human.RemoveList.txt"
+cp $TMPDIR/4_Bowtie_Mapping/human/$i".extendedFrags.human.RemoveList.txt" /groups/MolFishLab/4_Bowtie_Mapping/
+cp $TMPDIR/4_Bowtie_Mapping/human/$i".notCombined.human.RemoveList.txt" /groups/MolFishLab/4_Bowtie_Mapping/
+###removal of sequences using bbmap
+filterbyname.sh in=$TMPDIR/2_FLASH_Collapsed_Reads/$i".notCombined_1.fastq.gz" in2=$TMPDIR/2_FLASH_Collapsed_Reads/$i".notCombined_2.fastq.gz" out=$TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_1.fastq.gz" out2=$TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_2.fastq.gz" names=$TMPDIR/4_Bowtie_Mapping/human/$i".notCombined.human.RemoveList.txt" include=f
+filterbyname.sh in=$TMPDIR/2_FLASH_Collapsed_Reads/$i".extendedFrags.fastq.gz" out=$TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_extendedFrags.fastq.gz" names=$TMPDIR/4_Bowtie_Mapping/human/$i".extendedFrags.human.RemoveList.txt" include=f ;
+done
+
+#get stats
+for i in $(cat list-fastqc-dataset-5-2.txt); do zcat $TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_extendedFrags.fastq.gz" | echo $i $((`wc -l`/4)) >> number_of_reads_cleaned_human-1.txt; done
+for i in $(cat list-fastqc-dataset-5-2.txt); do zcat $TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_1.fastq.gz" | echo $i $((`wc -l`/4)) >> number_of_reads_cleaned_human.txt-1; done
+for i in $(cat list-fastqc-dataset-5-2.txt); do zcat $TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_2.fastq.gz" | echo $i $((`wc -l`/4)) >> number_of_reads_cleaned_human.txt-1; done
+
+# clean up to gain back more space
+cp $TMPDIR/number_of_reads_cleaned_human* /groups/MolFishLab/4_Bowtie_Mapping/
+rm -rf $TMPDIR/2_FLASH_Collapsed_Reads/
+rm -rf $TMPDIR/4_Bowtie_Mapping/human
+rm -rf $TMPDIR/bowtieDB/human/human
+
+# B) Mouse
+cat $TMPDIR/3_Kraken_TaxonomicID/customDB/library/added/*.fna* > mouse.input.fna
+bowtie2-build --threads 24 -f mouse.input.fna $TMPDIR/bowtieDB/mouse/mouse
+for i in $(cat list-fastqc-dataset-5-2.txt); do
+bowtie2 --threads 24 -q --phred33 --sensitive -I 0 -X 200 --fr -x $TMPDIR/bowtieDB/mouse/mouse -1 $TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_1.fastq.gz" -2 $TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_2.fastq.gz" -S 4_Bowtie_Mapping/mouse/$i".notCombined.mapping_mouse.sam" 2>&1 | tee bowtie2_notcombined_mouse.log
+bowtie2 --threads 24 -q --phred33 --sensitive --fr -x $TMPDIR/bowtieDB/mouse/mouse -U $TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_extendedFrags.fastq.gz" -S $TMPDIR/4_Bowtie_Mapping/mouse/$i".extendedFrags.mapping_mouse.sam" 2>&1 | tee bowtie2_extendedFrags_mouse.log;
+done
+
+# remove Mouse
+# Count reads that mapped to the contaminant database and should be removed
+for i in $(cat list-fastqc-dataset-5-2.txt); do
+samtools view -S -c -F 4 $TMPDIR/4_Bowtie_Mapping/mouse/$i".extendedFrags.mapping_mouse.sam" > $TMPDIR/4_Bowtie_Mapping/mouse/$i".count_extendedFrags_mouse.txt"
+samtools view -S -c -F 4 $TMPDIR/4_Bowtie_Mapping/mouse/$i".notCombined.mapping_mouse.sam" > $TMPDIR/4_Bowtie_Mapping/mouse/$i".count_notCombined_mouse.txt"
+# Make a list of reads that mapped to the contaminant database and should be removed (-F 4 mapped, -f 4 unmapped)
+samtools view -S -F 4 $TMPDIR/4_Bowtie_Mapping/mouse/$i".extendedFrags.mapping_mouse.sam" | cut -f 1 | uniq > $TMPDIR/4_Bowtie_Mapping/mouse/$i".extendedFrags.mouse.RemoveList.txt"
+samtools view -S -F 4 $TMPDIR/4_Bowtie_Mapping/mouse/$i".notCombined.mapping_mouse.sam" | cut -f 1 | uniq > $TMPDIR/4_Bowtie_Mapping/mouse/$i".notCombined.mouse.RemoveList.txt"
+#cp $TMPDIR/4_Bowtie_Mapping/mouse/$i".extendedFrags.mouse.RemoveList.txt" /groups/MolFishLab/4_Bowtie_Mapping/
+#cp $TMPDIR/4_Bowtie_Mapping/mouse/$i".notCombined.mouse.RemoveList.txt" /groups/MolFishLab/4_Bowtie_Mapping/ ;
+done
+
+
+###removal of sequences using bbmap
+for i in $(cat list-fastqc-dataset-5-2.txt); do
+filterbyname.sh in=$TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_1.fastq.gz" in2=$TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_2.fastq.gz" out=$TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_1.fastq.gz" out2=$TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_2.fastq.gz" names=$TMPDIR/4_Bowtie_Mapping/mouse/$i".notCombined.mouse.RemoveList.txt" include=f
+filterbyname.sh in=$TMPDIR/4_Bowtie_Mapping/Human_Removed/$i".noHuman_extendedFrags.fastq.gz" out=$TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_extendedFrags.fastq.gz" names=$TMPDIR/4_Bowtie_Mapping/mouse/$i".extendedFrags.mouse.RemoveList.txt" include=f ;
+done
+
+#get stats
+for i in $(cat list-fastqc-dataset-5-2.txt); do zcat $TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_extendedFrags.fastq.gz" | echo $i $((`wc -l`/4)) >> number_of_reads_cleaned_mouse.txt; done
+for i in $(cat list-fastqc-dataset-5-2.txt); do zcat $TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_1.fastq.gz" | echo $i $((`wc -l`/4)) >> number_of_reads_cleaned_mouse.txt; done
+for i in $(cat list-fastqc-dataset-5-2.txt); do zcat $TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_2.fastq.gz" | echo $i $((`wc -l`/4)) >> number_of_reads_cleaned_mouse.txt; done
+
+#clean up
+cp $TMPDIR/4_Bowtie_Mapping/mouse/*count* /groups/MolFishLab/4_Bowtie_Mapping/
+
+rm -rf $TMPDIR/4_Bowtie_Mapping/mouse/
+rm mouse.input.fna
+rm -rf $TMPDIR/bowtieDB/mouse/
+rm -rf $TMPDIR/3_Kraken_TaxonomicID/customDB/library/added/
+
+## C) Bacteria
+# not all the bacteria have been identified and the library has hundred of thousands so bowtie cannot build a library
+# identify the list of bacteria found in the samples and build a subset of the library (temporary file)
+# for i in $(ls 3_Kraken_TaxonomicID/*_report); do cat $i | grep "bacteria" | awk '$1 != 0.00' | cut -f6 >> bacteria.txt; done
+# cat bacteria.txt | sort -u > list-identified-bacteria.txt
+# this is for both collapsed and paired
+# subset
+# for i in $(cat list-identified-bacteria.txt); do cat /90days/uqddave1/3_Kraken_TaxonomicID/customDB/library/bacteria/library.fna | grep "$i" >> subset-library-bacteria.txt; done
+# sed 's/>//' subset-library-bacteria.txt > subset-library-bacteria-2.txt
+# Extract sequences with names in file name.lst, one sequence name per line:
+# seqtk subseq /90days/uqddave1/3_Kraken_TaxonomicID/customDB/library/bacteria/library.fna subset-library-bacteria-2.txt > subset-bacteria-temporary.fa
+
+bowtie2-build -f subset-bacteria-temporary.fa bacteria1st
+
+for i in $(cat list-fastqc-dataset-5-2.txt); do
+bowtie2 -q --phred33 --sensitive -I 0 -X 200 --fr -x $TMPDIR/bacteria1st -1 $TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_1.fastq.gz"  -2 $TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_2.fastq.gz"  -S $TMPDIR/4_Bowtie_Mapping/bacteria/$i".PE.mapping_human-mouse-bacteria.sam"
+bowtie2 -q --phred33 --sensitive --fr -x $TMPDIR/bacteria1st -U $TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_extendedFrags.fastq.gz" -S $TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.mapping_human-mouse-bacteria.sam"
+samtools view -S -c -F 4 $TMPDIR/4_Bowtie_Mapping/bacteria/$i".PE.mapping_human-mouse-bacteria.sam" > $TMPDIR/4_Bowtie_Mapping/bacteria/$i".PE.count.bacteria.sam"
+samtools view -S -c -F 4 $TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.mapping_human-mouse-bacteria.sam" > $TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.count.bacteria"
+samtools view -S -F 4 $TMPDIR/4_Bowtie_Mapping/bacteria/$i".PE.mapping_human-mouse-bacteria.sam" | cut -f 1 | uniq > $TMPDIR/4_Bowtie_Mapping/bacteria/$i".PE.bacteria.RemoveList.txt"
+cp $TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.bacteria.RemoveList.txt" /groups/MolFishLab/4_Bowtie_Mapping/
+cp $TMPDIR/4_Bowtie_Mapping/bacteria/$i".PE.bacteria.RemoveList.txt" /groups/MolFishLab/4_Bowtie_Mapping/
+samtools view -S -F 4 $TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.mapping_human-mouse-bacteria.sam" | cut -f 1 | uniq > $TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.bacteria.RemoveList.txt"
+cp $TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.bacteria.RemoveList.txt" /groups/MolFishLab/4_Bowtie_Mapping/
+filterbyname.sh in=$TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_1.fastq.gz" in2=$TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_2.fastq.gz" out=$TMPDIR/4_Bowtie_Mapping/Bacteria_Removed/$i".noHuman-Mouse-Bacteria_1.fastq.gz" out2=$TMPDIR/4_Bowtie_Mapping/Bacteria_Removed/$i".noHuman-Mouse-Bacteria_2.fastq.gz" names=$TMPDIR/4_Bowtie_Mapping/bacteria/$i".PE.bacteria.RemoveList.txt" include=f
+filterbyname.sh in=$TMPDIR/4_Bowtie_Mapping/Mouse_Removed/$i".noHuman_noMouse_extendedFrags.fastq.gz" out=$TMPDIR/4_Bowtie_Mapping/Bacteria_Removed/$i".noHuman_Mouse-Bacteria-extendedFrags.fastq.gz" names=$TMPDIR/4_Bowtie_Mapping/bacteria/$i".extendedFrags.bacteria.RemoveList.txt" include=f ;
+done
+
+cp $TMPDIR/4_Bowtie_Mapping/bacteria/*count* /groups/MolFishLab/4_Bowtie_Mapping/
+cp -r $TMPDIR/4_Bowtie_Mapping/Bacteria_Removed/* /groups/MolFishLab/4_Bowtie_Mapping/
+cp $TMPDIR/*number_of_reads_cleaned* /groups/MolFishLab/4_Bowtie_Mapping/
+cp $TMPDIR/*.log* /groups/MolFishLab/4_Bowtie_Mapping/

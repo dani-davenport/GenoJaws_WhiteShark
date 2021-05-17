@@ -1,0 +1,79 @@
+#!/bin/bash
+#PBS -V
+#PBS -l select=1:ncpus=24:mem=120GB,walltime=05:00:00
+#PBS -A qris-uq
+#PBS -N SpeciesID
+# check contamination in SAMPLES
+
+## ----
+module load blast
+module load samtools
+module load anaconda
+source activate /groups/MolFishLab/seqDataPy3.6
+## ----
+
+cp /groups/MolFishLab/Genome_Resources/RefSeq_MTGenome_Lamninae_Carcharhinus_Galeocerdo.fasta $TMPDIR
+# grep "^>" /groups/MolFishLab/Genome_Resources/RefSeq_MTGenome_Lamninae_Carcharhinus_Galeocerdo.fasta
+#>NC_022415.1 Carcharodon carcharias mitochondrion, complete genome
+#>NC_022691.1 Isurus oxyrinchus mitochondrion, complete genome
+#>NC_024101.1 Isurus paucus mitochondrion, complete genome
+#>NC_024269.1 Lamna ditropis mitochondrion, complete genome
+#>NC_033911.1 Lamna nasus mitochondrion, complete genome
+#>NC_047239.1 Carcharhinus albimarginatus voucher ICST:020002086005 mitochondrion, complete genome
+#>NC_047238.1 Carcharhinus amblyrhynchos voucher ICST:020002085971 mitochondrion, complete genome
+#>NC_025520.1 Carcharhinus longimanus mitochondrion, complete genome
+#>NC_027081.1 Carcharhinus brevipinna mitochondrion, complete genome
+#>NC_026871.1 Carcharhinus tjutjot mitochondrion, complete genome
+#>NC_026696.1 Carcharhinus amboinensis mitochondrion, complete genome
+#>NC_024862.1 Carcharhinus macloti mitochondrion, complete genome
+#>NC_024596.1 Carcharhinus plumbeus mitochondrion, complete genome
+#>NC_024284.1 Carcharhinus melanopterus mitochondrion, complete genome
+#>NC_024055.1 Carcharhinus acronotus mitochondrion, complete genome
+#>NC_023522.1 Carcharhinus leucas mitochondrion, complete genome
+#>NC_023948.1 Carcharhinus amblyrhynchoides mitochondrion, complete genome
+#>NC_023521.1 Carcharhinus sorrah mitochondrion, complete genome
+#>NC_020611.1 Carcharhinus obscurus mitochondrion, complete genome
+#>NC_042256.1 Carcharhinus falciformis mitochondrion, complete genome
+#>NC_022193.1 Galeocerdo cuvier mitochondrion, complete genome
+
+cp /90days/uqddave1/list-fastqc-raw.txt  $TMPDIR
+
+#blast scores, will be output with best hit at top
+# EValue:The BLAST E-value is the number of expected hits of similar quality (score) that could be found just by chance. -> The smaller the E-value, the better the match.
+#BitScore -> The higher the bit-score, the better the sequence similarity. Bit-score does not depend on database size.
+
+# make blast db
+REF=RefSeq_MTGenome_Lamninae_Carcharhinus_Galeocerdo # a library of all lamninae
+makeblastdb -in $REF".fasta" -out "RefSeq_MTGenome_Lamninae_Carcharhinus_Galeocerdo" -parse_seqids -dbtype nucl
+
+#-taxid_map taxidmapfile
+#sed '1d' nucl_gb.accession2taxid | awk '{print $2" "$3}' > taxidmapfile
+
+FILELIST=/90days/uqddave1/list-fastqc-raw.txt
+
+# i didn't bother with a taxon map - just look them up there are not that many in the DB
+# NC_022415.1 Carcharodon carcharias mitochondrion, complete genome
+
+# check samples
+for i in $(cat $FILELIST);do
+ #cp /QRISdata/Q1253/Mapping_mtDNA_mtDNA_Files/$i".RG.sort.bam" $TMPDIR
+ # get sequences into fasta format for blast
+ samtools view BamFiles/$i".final.q10.bam" | awk '{print ">"$1"\n"$10}' > $TMPDIR/$i"output.fasta" # ".final.q10.bam"
+ # choose k random sequences to check
+ bioawk -c fastx -v k=1000 '{y=x++<k?x-1:int(rand()*x);if(y<k)a[y]=">"$name"\n"$seq}END{for(z in a)print a[z]}' $TMPDIR/$i"output.fasta" >  $TMPDIR/$i"output.awk.fasta"
+ # qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore
+ # getting only -max_target_seqs  10 (top 10 hits)
+ blastn -query $TMPDIR/$i"output.awk.fasta" -db $REF -out $i"_blast.txt" -max_target_seqs 10 -task blastn -outfmt "6 qseqid sseqid pident length mismatch evalue bitscore"
+ # just get top hits back -max_target_seqs
+ #blast_formatter -archive $i"_blast.txt" -outfmt 6 -out $i"_blast.tab"
+done
+
+cp *"blast.txt" /30days/uqddave1/mtDNA_blast_search/
+
+
+# get top hit for query seqs
+for i in $(cat $FILELIST);do
+#awk '{b[$1]="0"; e[$1]="";if (a[$1,$2]=="0") a[$1,$2]=$12; else {score=a[$1,$2]+$12; a[$1,$2]=score}}END{for (i in b) for (j in a) {split(j,c,SUBSEP); if (c[1]==i && a[j]>b[i]) {b[i]=a[j];e[i]=c[2]}}; for (i in b) print i"\t"e[i]"\t"b[i]}' $i"_blast.txt";
+#method 1 - Use the first alignment per sequence assuming the best hit is always listed first
+awk '! a[$1]++' $i"_blast.txt" > $i"best_match_per_seq_blast.txt";
+done

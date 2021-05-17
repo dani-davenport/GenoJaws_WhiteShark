@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -V
+#PBS -l select=1:ncpus=20:mem=80GB,walltime=50:00:00
+#PBS -A qris-uq
+#PBS -N FLASHmerge
+
+module load anaconda
+source activate /groups/MolFishLab/seqDataPy3.6
+
+cd $TMPDIR/
+mkdir 1_adapterremoved/
+mkdir flash_out
+
+cp /groups/MolFishLab/2_FLASH_Collapsed_Reads/* $TMPDIR/1_adapterremoved/
+cp /90days/uqddave1/list-fastqc-raw.txt $TMPDIR
+
+DIROUT=flash_out/
+
+for i in $(cat list-fastqc-raw.txt); do
+if [[test -f 1_adapterremoved/$i".extendedFrags.fastq.gz"]]; then
+  :
+else
+  flash 1_adapterremoved/$i".pair1.truncated.gz" 1_adapterremoved/$i".pair2.truncated.gz" -z -o $i --allow-outies --output-directory=$DIROUT --max-overlap=200 2>&1 | tee -a flash.log
+fi ;
+done
+
+cp -r flash_out $PBS_O_WORKDIR/2_FLASH_Collapsed_Reads
